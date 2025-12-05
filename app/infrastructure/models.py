@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List
 import datetime
 
 from sqlmodel import SQLModel, Field
