@@ -34,10 +34,11 @@ from typing import List, Optional
 from sqlmodel import select, Session
 
 from app.infrastructure.db import create_db, get_session
-from app.infrastructure.models import User, Genre, Author, Source, Book, Recommendation, UserFeedback
+from app.infrastructure.models import User, Genre, Author, Source, Book, Recommendation, UserFeedback, UserUpdate
 from app.infrastructure.requests import get_books_by_genre, get_books_by_author, get_book_by_id, \
     get_random_book_by_genre, post_genre, get_genres, post_author, get_authors, post_source, get_sources, post_book, \
-    post_user, get_user_by_telegram_id, get_recommendations, get_books, get_books_by_author_and_genre, post_feedback
+    post_user, get_user_by_telegram_id, get_recommendations, get_books, get_books_by_author_and_genre, post_feedback, \
+    delete_existing_user, delete_existing_book, update_existing_user
 
 app = FastAPI(title="LitRecom API")
 
@@ -160,3 +161,27 @@ def create_feedback(feedback_id: int, telegram_id: int, book_id: int, rating: st
     user = get_user_by_telegram_id(telegram_id)
     feedback = post_feedback(feedback_id, user.id, book_id, rating)
     return feedback
+
+@app.delete("/users/{telegram_id}", response_model=User)
+def delete_user(telegram_id: int):
+    user = get_user_by_telegram_id(telegram_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    deleted_user = delete_existing_user(user.id)
+    return deleted_user
+
+@app.delete("/books/{book_id}", response_model=Book)
+def delete_book(book_id: int):
+    book = get_book_by_id(book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="Book not found")
+    deleted_book = delete_existing_book(book.id)
+    return deleted_book
+
+@app.put("/users/{telegram_id}", response_model=User)
+def update_user(telegram_id: int, new_data: UserUpdate):
+    user = get_user_by_telegram_id(telegram_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    updated_user = update_existing_user(user.id, new_data)
+    return updated_user

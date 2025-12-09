@@ -4,7 +4,7 @@ from typing import List
 from sqlmodel import select
 
 from app.infrastructure.db import get_session
-from app.infrastructure.models import User, Book, Recommendation, UserFeedback, Genre, Author, Source
+from app.infrastructure.models import User, Book, Recommendation, UserFeedback, Genre, Author, Source, UserUpdate
 
 
 def get_user_by_telegram_id(tg_id: int) -> User:
@@ -174,3 +174,35 @@ def post_feedback(
         session.commit()
         session.refresh(feedback)
         return feedback
+
+def delete_existing_user(user_id: int) -> User:
+    with get_session() as session:
+        user = session.get(User, user_id)
+        session.delete(user)
+        session.commit()
+        session.refresh(user)
+        return user
+
+def delete_existing_book(book_id: int) -> Book:
+    with get_session() as session:
+        book = session.get(Book, book_id)
+        session.delete(book)
+        session.commit()
+        session.refresh(book)
+        return book
+
+def update_existing_user(user_id: int, new_data: UserUpdate) -> User:
+    with get_session() as session:
+        user = session.get(User, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        update_data = new_data.dict(exclude_unset=True)
+
+        for key, value in update_data.items():
+            setattr(user, key, value)
+
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        return user

@@ -12,6 +12,9 @@ class User(SQLModel, table=True):
         default_factory=datetime.datetime.utcnow
     )
 
+class UserUpdate(SQLModel):
+    username: str | None = None
+
 class Genre(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str
