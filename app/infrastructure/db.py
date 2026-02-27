@@ -10,3 +10,13 @@ def create_db():
 
 def get_session():
     return Session(engine)
+
+def add_to_db(session: Session, item: SQLModel):
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+
+def delete_from_db(session: Session, item: SQLModel):
+    session.delete(item)
+    session.commit()
+    session.refresh(item)

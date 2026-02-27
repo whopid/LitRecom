@@ -1,9 +1,10 @@
 from http.client import HTTPException
 from typing import List
+from collections import defaultdict
 
-from sqlmodel import select
+from sqlmodel import select, func
 
-from app.infrastructure.db import get_session
+from app.infrastructure.db import get_session, add_to_db, delete_from_db
 from app.infrastructure.models import User, Book, Recommendation, UserFeedback, Genre, Author, Source, UserUpdate
 
 
@@ -60,12 +61,10 @@ def get_feedback_for_book(book_id: int) -> List[UserFeedback]:
         stmt = select(UserFeedback).where(UserFeedback.book_id == book_id)
         return session.exec(stmt).all()
 
-def post_genre(genre_id: int, genre_name: str) -> Genre:
+def post_genre(genre_name: str) -> Genre:
     with get_session() as session:
-        genre = Genre(id=genre_id, name=genre_name)
-        session.add(genre)
-        session.commit()
-        session.refresh(genre)
+        genre = Genre(name=genre_name)
+        add_to_db(session, genre)
         return genre
 
 def get_genres() -> List[Genre]:
@@ -74,12 +73,10 @@ def get_genres() -> List[Genre]:
         genres = session.exec(stmt).all()
         return genres
 
-def post_author(author_id: int, author_name: str) -> Author:
+def post_author(author_name: str) -> Author:
     with get_session() as session:
-        author = Author(id=author_id, name=author_name)
-        session.add(author)
-        session.commit()
-        session.refresh(author)
+        author = Author(name=author_name)
+        add_to_db(session, author)
         return author
 
 def get_authors() -> List[Author]:
@@ -88,12 +85,10 @@ def get_authors() -> List[Author]:
         authors = session.exec(stmt).all()
         return authors
 
-def post_source(source_id: int, source_name: str) -> Source:
+def post_source(source_name: str) -> Source:
     with get_session() as session:
-        source = Source(id=source_id, name=source_name)
-        session.add(source)
-        session.commit()
-        session.refresh(source)
+        source = Source(name=source_name)
+        add_to_db(session, source)
         return source
 
 def get_sources() -> List[Source]:
@@ -104,91 +99,154 @@ def get_sources() -> List[Source]:
 
 def post_book(book: Book) -> Book:
     with get_session() as session:
-        session.add(book)
-        session.commit()
-        session.refresh(book)
+        add_to_db(session, book)
         return book
 
 def post_user(
-        user_id: int,
         user_telegram_id: int,
         username: str
 ) -> User:
     with get_session() as session:
         user = User(
-            id=user_id,
             telegram_id=user_telegram_id,
             username=username
         )
-        session.add(user)
-        session.commit()
-        session.refresh(user)
+        add_to_db(session, user)
         return user
 
 def get_recommendations(user_id: int, amount_of_recommendations: int = 3) -> List[Book]:
     with get_session() as session:
+
         user = session.get(User, user_id)
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
 
-        liked = session.exec(
-            select(UserFeedback).where(
-                UserFeedback.user_id == user_id,
-                UserFeedback.rating == "like"
+        liked_genres_stmt = (
+            select(
+                Book.genre_id,
+                func.count(UserFeedback.id).label("weight")
             )
-        ).all()
+            .join(UserFeedback, UserFeedback.book_id == Book.id)
+            .where(
+                UserFeedback.user_id == user_id,
+                UserFeedback.rating == "like",
+                Book.genre_id.is_not(None)
+            )
+            .group_by(Book.genre_id)
+        )
 
-        books_candidates = []
-        for fb in liked:
-            book = session.get(Book, fb.book_id)
-            if book:
-                same_genre = session.exec(
-                    select(Book).where(Book.genre_id == book.genre_id)
-                ).all()
-                books_candidates.extend(same_genre)
+        genre_weights = {
+            genre_id: weight
+            for genre_id, weight in session.exec(liked_genres_stmt).all()
+        }
 
-        unique_books = list({b.id: b for b in books_candidates}.values())
+        seen_books_stmt = (
+            select(UserFeedback.book_id)
+            .where(UserFeedback.user_id == user_id)
+        )
 
-        result = unique_books[:amount_of_recommendations]
+        seen_books = set(session.exec(seen_books_stmt).all())
 
-        for book in result:
+        popularity_subq = (
+            select(
+                UserFeedback.book_id,
+                func.count(UserFeedback.id).label("popularity")
+            )
+            .where(UserFeedback.rating == "like")
+            .group_by(UserFeedback.book_id)
+        ).subquery()
+
+        stmt = ( #TODO: тут не stmt, а запрос к api
+            select(
+                Book,
+                func.coalesce(popularity_subq.c.popularity, 0).label("popularity")
+            )
+            .join(
+                popularity_subq,
+                popularity_subq.c.book_id == Book.id,
+                isouter=True
+            )
+            .where(Book.id.notin_(seen_books))
+        )
+
+        books_with_popularity = session.exec(stmt).all()
+
+        if not genre_weights:
+            popular_books = sorted(
+                books_with_popularity,
+                key=lambda x: x[1],
+                reverse=True
+            )
+            result_books = [book for book, _ in popular_books[:amount_of_recommendations]]
+
+        else:
+            scored_books = []
+
+            for book, popularity in books_with_popularity:
+                genre_weight = genre_weights.get(book.genre_id, 0)
+                score = genre_weight * 0.7 + popularity * 0.3 #TODO: подумать над коэффициентами
+                scored_books.append((book, score))
+
+            scored_books.sort(key=lambda x: x[1], reverse=True)
+
+            sorted_books = [book for book, _ in scored_books]
+
+            result_books = []
+            genre_streak = defaultdict(int)
+
+            for book in sorted_books:
+                genre = book.genre_id
+
+                if genre_streak[genre] < 2:
+                    result_books.append(book)
+                    genre_streak[genre] += 1
+
+                for g in genre_streak:
+                    if g != genre:
+                        genre_streak[g] = 0
+
+                if len(result_books) >= amount_of_recommendations:
+                    break
+
+            if len(result_books) < amount_of_recommendations:
+                for book in sorted_books:
+                    if book not in result_books:
+                        result_books.append(book)
+                    if len(result_books) >= amount_of_recommendations:
+                        break
+
+        for book in result_books:
             session.add(Recommendation(user_id=user_id, book_id=book.id))
+
         session.commit()
 
-        return result
+        return [book.model_dump() for book in result_books]
 
 def post_feedback(
-        feedback_id: int,
         user_id: int,
         book_id: int,
         rating: str
 ) -> UserFeedback:
     with get_session() as session:
-        feedback = UserFeedback(id=feedback_id, user_id=user_id, book_id=book_id, rating=rating)
+        feedback = UserFeedback(user_id=user_id, book_id=book_id, rating=rating)
         if not session.get(User, feedback.user_id):
             raise HTTPException(status_code=400, detail="User not found")
         if not session.get(Book, feedback.book_id):
             raise HTTPException(status_code=400, detail="Book not found")
 
-        session.add(feedback)
-        session.commit()
-        session.refresh(feedback)
+        add_to_db(session, feedback)
         return feedback
 
 def delete_existing_user(user_id: int) -> User:
     with get_session() as session:
         user = session.get(User, user_id)
-        session.delete(user)
-        session.commit()
-        session.refresh(user)
+        delete_from_db(session, user)
         return user
 
 def delete_existing_book(book_id: int) -> Book:
     with get_session() as session:
         book = session.get(Book, book_id)
-        session.delete(book)
-        session.commit()
-        session.refresh(book)
+        delete_from_db(session, book)
         return book
 
 def update_existing_user(user_id: int, new_data: UserUpdate) -> User:
@@ -202,7 +260,5 @@ def update_existing_user(user_id: int, new_data: UserUpdate) -> User:
         for key, value in update_data.items():
             setattr(user, key, value)
 
-        session.add(user)
-        session.commit()
-        session.refresh(user)
+        add_to_db(session, user)
         return user

@@ -30,11 +30,12 @@
 
 from fastapi import FastAPI, Depends, HTTPException, Form, Query
 from fastapi.responses import HTMLResponse
-from typing import List, Optional
+from typing import List
 from sqlmodel import select, Session
 
 from app.infrastructure.db import create_db, get_session
-from app.infrastructure.models import User, Genre, Author, Source, Book, Recommendation, UserFeedback, UserUpdate
+from app.infrastructure.models import User, Genre, Author, Source, Book, Recommendation, UserFeedback, UserUpdate, \
+    BookRead
 from app.infrastructure.requests import get_books_by_genre, get_books_by_author, get_book_by_id, \
     get_random_book_by_genre, post_genre, get_genres, post_author, get_authors, post_source, get_sources, post_book, \
     post_user, get_user_by_telegram_id, get_recommendations, get_books, get_books_by_author_and_genre, post_feedback, \
@@ -47,8 +48,8 @@ def on_startup():
     create_db()
 
 @app.post("/genres/", response_model=Genre)
-def create_genre(genre_id: int, genre_name: str):
-    genre = post_genre(genre_id, genre_name)
+def create_genre(genre_name: str):
+    genre = post_genre(genre_name)
     return genre
 
 @app.get("/genres/", response_model=List[Genre])
@@ -57,8 +58,8 @@ def list_genres():
     return genres
 
 @app.post("/authors/", response_model=Author)
-def create_author(author_id: int, author_name: str):
-    author = post_author(author_id, author_name)
+def create_author(author_name: str):
+    author = post_author(author_name)
     return author
 
 @app.get("/authors/", response_model=List[Author])
@@ -67,8 +68,8 @@ def list_authors():
     return authors
 
 @app.post("/sources/", response_model=Source)
-def create_source(source_id: int, source_name: str):
-    source = post_source(source_id, source_name)
+def create_source(source_name: str):
+    source = post_source(source_name)
     return source
 
 @app.get("/sources/", response_model=List[Source])
@@ -78,7 +79,6 @@ def list_sources():
 
 @app.post("/books/", response_model=Book)
 def create_book(
-        book_id: int,
         title: str,
         author_id: int | None,
         description: str | None,
@@ -86,12 +86,11 @@ def create_book(
         genre_id: int | None = None,
 ) -> Book:
     new_book = Book(
-        book_id = book_id,
-        title = title,
-        author_id = author_id,
-        description = description,
-        source_id = source_id,
-        genre_id = genre_id
+        title=title,
+        author_id=author_id,
+        description=description,
+        source_id=source_id,
+        genre_id=genre_id
     )
 
     book = post_book(new_book) #TODO: убрать создание доменного объекта
@@ -130,8 +129,8 @@ def get_random_book(genre_id: int):
     return book
 
 @app.post("/users/", response_model=User)
-def create_user(user_id: int, user_telegram_id: int, username: str):
-    user = post_user(user_id, user_telegram_id, username)
+def create_user(user_telegram_id: int, username: str):
+    user = post_user(user_telegram_id, username)
     return user
 
 @app.get("/users/{telegram_id}", response_model=User)
@@ -141,7 +140,7 @@ def get_user_by_tg(telegram_id: int):
         raise HTTPException(status_code=404, detail="User not found")
     return user
 
-@app.post("/users/{telegram_id}/recommend", response_model=List[Book])
+@app.post("/users/{telegram_id}/recommend", response_model=List[BookRead])
 def recommend_for_user(
         telegram_id: int,
         amount_of_recommendations: int = Query(3, ge=1)
@@ -151,15 +150,16 @@ def recommend_for_user(
         raise HTTPException(status_code=404, detail="User not found")
 
     recommendations = get_recommendations(user.id, amount_of_recommendations)
+    print("recommendations: ", recommendations)
     if not recommendations:
         raise HTTPException(status_code=404, detail="No recommendations found")
 
     return recommendations
 
 @app.post("/feedback/", response_model=UserFeedback)
-def create_feedback(feedback_id: int, telegram_id: int, book_id: int, rating: str):
+def create_feedback(telegram_id: int, book_id: int, rating: str):
     user = get_user_by_telegram_id(telegram_id)
-    feedback = post_feedback(feedback_id, user.id, book_id, rating)
+    feedback = post_feedback(user.id, book_id, rating)
     return feedback
 
 @app.delete("/users/{telegram_id}", response_model=User)
