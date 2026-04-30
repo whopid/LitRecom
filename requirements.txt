@@ -1,7 +1,9 @@
 sqlmodel
 python-dotenv
-psycopg2
+asyncpg
 fastapi
 uvicorn
 aiogram
 asyncio
+httpx
+greenlet
